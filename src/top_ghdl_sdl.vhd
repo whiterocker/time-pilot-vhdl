@@ -31,20 +31,22 @@ end entity top_ghdl_sdl;
 architecture behaviour of top_ghdl_sdl is
 
   -- clocks and resets
-  signal mclk   : std_logic;
-  signal mreset : std_logic;
+  signal mclk    : std_logic;
+  signal mreset  : std_logic;
 
   -- video signals
-  signal red    : std_logic_vector(7 downto 0);
-  signal grn    : std_logic_vector(7 downto 0);
-  signal blu    : std_logic_vector(7 downto 0);
-  signal pxclk  : std_logic;
-  signal hsync  : std_logic;
-  signal phsync : std_logic;
-  signal vsync  : std_logic;
+  signal red     : std_logic_vector(7 downto 0);
+  signal grn     : std_logic_vector(7 downto 0);
+  signal blu     : std_logic_vector(7 downto 0);
+  signal pxclk   : std_logic;
+  signal hsync   : std_logic;
+  signal hblank  : std_logic;
+  signal phblank : std_logic;
+  signal vsync   : std_logic;
+  signal vblank  : std_logic;
 
-  signal audio  : std_logic_vector(17 downto 0);
-  signal aclk   : std_logic;
+  signal audio   : std_logic_vector(17 downto 0);
+  signal aclk    : std_logic;
 
 begin  -- behaviour
     -- generate the master reset
@@ -93,7 +95,9 @@ begin  -- behaviour
       grn       => grn,
       blu       => blu,
       hsync     => hsync,
+      hblank    => hblank,
       vsync     => vsync,
+      vblank    => vblank,
       pxclk     => pxclk,
 
       audio     => audio,
@@ -107,12 +111,12 @@ begin  -- behaviour
     variable dummy : integer := 0;
   begin
     if pxclk'event and pxclk = '1' then
-      phsync <= hsync;
+      phblank <= hblank;
       
       -- sync x and y position
-      if hsync = '1' and phsync = '0' then
+      if hblank = '0' and phblank = '1' then
         x := 0;
-        if vsync = '0' then
+        if vblank = '1' then
           y := 0;
         else
           y := y + 1;

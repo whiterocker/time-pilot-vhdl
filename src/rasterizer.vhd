@@ -75,7 +75,9 @@ entity rasterizer is
    rgb_out_blu:         out std_logic_vector(7 downto 0);
    rgb_out_pixel_clock: out std_logic;
    rgb_hsync:           out std_logic;
+   rgb_hblank:          out std_logic;  -- active-high
    rgb_vsync:           out std_logic;
+   rgb_vblank:          out std_logic;  -- active-high
    video_line:          out std_logic_vector(7 downto 0);
    rram_addr:           out std_logic_vector(14 downto 0);
    rram_dout:           in std_logic_vector(7 downto 0));
@@ -111,10 +113,12 @@ architecture behaviour of rasterizer is
   signal sline  : unsigned(8 downto 0);  -- scan vertical (272 lines)
   signal vpos   : unsigned(8 downto 0);  -- frame vertical (256x256)
   signal vpos2  : unsigned(8 downto 0);  -- frame vertical (256x256)
-  signal vsync  : std_logic;  
+  signal vsync  : std_logic;
+  signal vblank : std_logic;
   signal spixel : unsigned(8 downto 0);  -- scan pixel count (273 per line)
   signal hpos   : unsigned(7 downto 0);  -- frame horizontal (256x256)
-  signal hsync  : std_logic;  
+  signal hsync  : std_logic;
+  signal hblank : std_logic;
   signal colour : std_logic_vector(4 downto 0);
 
   constant zero8  : unsigned := "00000000";
@@ -235,15 +239,27 @@ begin  -- behaviour
   sync: process(clk, reset)
   begin  -- process sync
     if reset = '1' then               -- asynchronous reset (active low)
-      hsync <= '1';
-      vsync <= '1';
+      hsync  <= '1';
+      hblank <= '1';
+      vsync  <= '1';
+      vblank <= '1';
     elsif clk'event and clk = '0' then  -- falling clock edge
       if (spixel <= 16) then
+        hblank <= '1';
+      else
+        hblank <= '0';
+      end if;
+      if (spixel >= 2) and (spixel <= 11) then
         hsync <= '0';
       else
         hsync <= '1';
       end if;
       if (sline <= 15) then
+        vblank <= '1';
+      else
+        vblank <= '0';
+      end if;
+      if (sline = 5) then
         vsync <= '0';
       else
         vsync <= '1';
@@ -251,8 +267,10 @@ begin  -- behaviour
     end if;
   end process sync;
 
-  rgb_vsync <= vsync;
-  rgb_hsync <= hsync;
+  rgb_vsync  <= vsync;
+  rgb_vblank <= vblank;
+  rgb_hsync  <= hsync;
+  rgb_hblank <= hblank;
 
   -- video line
   video_line <= std_logic_vector(vpos2(7 downto 0));
@@ -561,7 +579,7 @@ begin  -- behaviour
       colour <= "11111";
     elsif clk'event and clk = '0' then
       pixel_raddr <= std_logic(vpos2(0)) & std_logic_vector(hpos);
-      if ((vsync = '0') or (hsync = '0')) then
+      if ((vblank = '1') or (hblank = '1')) then
         colour <= "00000";
       else
         colour <= pixel_rdata;

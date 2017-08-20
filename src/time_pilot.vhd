@@ -50,7 +50,9 @@ entity time_pilot is
          grn       : out std_logic_vector(7 downto 0);
          blu       : out std_logic_vector(7 downto 0);
          hsync     : out std_logic;
+         hblank    : out std_logic;
          vsync     : out std_logic;
+         vblank    : out std_logic;
          pxclk     : out std_logic;
 
          -- audio output
@@ -115,7 +117,9 @@ architecture behaviour of time_pilot is
   signal rast_blu          : std_logic_vector(7 downto 0);
   signal rast_pixel_clk    : std_logic;
   signal rast_hsync        : std_logic;
+  signal rast_hblank       : std_logic;
   signal rast_vsync        : std_logic;
+  signal rast_vblank       : std_logic;
   signal rast_video_line   : std_logic_vector(7 downto 0);
   signal rast_addr         : std_logic_vector(14 downto 0);
   signal rast_data         : std_logic_vector(7 downto 0);
@@ -405,7 +409,7 @@ begin  -- behaviour
     );
 
   mz80_reset <= not mreset;
-  mz80_nmi   <= rast_vsync or not mz80_nmi_enable;
+  mz80_nmi   <= not rast_vblank or not mz80_nmi_enable;
   
   mz80_data_in <=
     tm1_data_out when (mz80_addr(15 downto 13) = "000") else
@@ -467,7 +471,9 @@ begin  -- behaviour
       rgb_out_blu         => rast_blu,
       rgb_out_pixel_clock => rast_pixel_clk,
       rgb_hsync           => rast_hsync,
+      rgb_hblank          => rast_hblank,
       rgb_vsync           => rast_vsync,
+      rgb_vblank          => rast_vblank,
       video_line          => rast_video_line,
       rram_addr           => rast_addr,
       rram_dout           => rast_data
@@ -483,12 +489,14 @@ begin  -- behaviour
     e12_data_out when (rast_addr(14 downto 8) = "1111001") else
     X"ff";
 
-  red   <= rast_red;
-  grn   <= rast_grn;
-  blu   <= rast_blu;
-  vsync <= rast_vsync;
-  hsync <= rast_hsync;
-  pxclk <= rast_pixel_clk;
+  red    <= rast_red;
+  grn    <= rast_grn;
+  blu    <= rast_blu;
+  vsync  <= rast_vsync;
+  vblank <= rast_vblank;
+  hsync  <= rast_hsync;
+  hblank <= rast_hblank;
+  pxclk  <= rast_pixel_clk;
 
   -- =======================================================================
   -- audio Z80
