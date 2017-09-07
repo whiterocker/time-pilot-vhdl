@@ -28,7 +28,7 @@ int init_sdl(int dummy)
 {
   SDL_Init(SDL_INIT_EVERYTHING);
 
-  screen = SDL_SetVideoMode(256, 256, 32, SDL_SWSURFACE);
+  screen = SDL_SetVideoMode(512, 512, 32, SDL_SWSURFACE);
 
   return 0;
 }
@@ -37,18 +37,29 @@ int init_sdl(int dummy)
 
 int put_pixel(int x, int y, int r, int g, int b)
 {
-  Uint32 pixel = SDL_MapRGB(screen->format, r, g, b);
-
-  SDL_LockSurface(screen);
-
-  Uint8 * p = (Uint8*) screen->pixels;
-  p += (y * screen->pitch) + (x * sizeof(Uint32));
-  *((Uint32*)p) = pixel;
-
-  SDL_UnlockSurface(screen);
-  SDL_UpdateRect(screen, x, y, 1, 1);
-
   // printf("x=%d, y=%d, r=%d, g=%d, b=%d\n", x, y, r, g, b);
+
+  if ((x < 256) && (y < 256)) {
+    Uint32 pixel = SDL_MapRGB(screen->format, r, g, b);
+
+    SDL_LockSurface(screen);
+    
+    Uint8 * p = (Uint8*) screen->pixels;
+    p += (2 * y * screen->pitch) + (2 * x * sizeof(Uint32));
+    
+    Uint32* pp = (Uint32*)p;
+    pp[0] = pixel; pp[1] = pixel;
+    
+    p += screen->pitch;
+    pp = (Uint32*)p;
+    pp[0] = pixel; pp[1] = pixel;
+  
+    SDL_UnlockSurface(screen);
+    SDL_UpdateRect(screen, 2*x, 2*y, 2, 2);
+  }
+  else {
+    printf("skipping bogus pixel: x=%d, y=%d, r=%d, g=%d, b=%d\n", x, y, r, g, b);
+  }
 
   return 0;
 } 

@@ -75,7 +75,7 @@ SDL_LINK_ARGS = $(shell pkg-config --libs sdl | sed 's/-l/-Wl,-l/g')
 GHDL_OPTS = --ieee=synopsys -fexplicit --workdir=work
 
 OBJS  = tm1.o tm2.o tm3.o tm4.o tm5.o tm6.o e9.o e12.o tm7.o \
-	ay_3_8910_psg.o dpram2k.o pixel_ram.o ram1k.o ram2k.o rasterizer.o resampler.o \
+	ay_3_8910_psg.o dpram1k.o dpram2k.o pixel_ram.o ram1k.o ram2k.o rasterizer.o resampler.o \
 	t80_mcode.o t80_pack.o t80_alu.o t80_reg.o t80.o t80se.o \
 	sdl_adapt.o 
 WOBJS = $(addprefix work/,$(OBJS))

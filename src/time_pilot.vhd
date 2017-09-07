@@ -19,6 +19,10 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
+use ieee.std_logic_textio.all;  
+
+library std;
+use std.textio.all;
 
 library work;
 use work.all;
@@ -27,38 +31,43 @@ use work.all;
 
 -- top-level entity for time pilot
 entity time_pilot is
-   port (mclk      : in std_logic;      -- 73.728 MHz
-         mreset    : in std_logic;      -- active-high
+  generic (
+    LOGINFO : boolean := false
+  );
+  port (mclk      : in std_logic;      -- 36.864 MHz
+        mreset    : in std_logic;      -- active-high
 
-         -- discrete inputs
-         p1start   : in std_logic;
-         p2start   : in std_logic;         
-         coin1     : in std_logic;
-         coin2     : in std_logic;
+        -- discrete inputs
+        p1start   : in std_logic;
+        p2start   : in std_logic;         
+        coin1     : in std_logic;
+        coin2     : in std_logic;
          
-         fire      : in std_logic;
-         joy_up    : in std_logic;
-         joy_down  : in std_logic;
-         joy_left  : in std_logic;
-         joy_right : in std_logic;
+        fire      : in std_logic;
+        joy_up    : in std_logic;
+        joy_down  : in std_logic;
+        joy_left  : in std_logic;
+        joy_right : in std_logic;
 
-         dip1      : in std_logic_vector(7 downto 0);
-         dip2      : in std_logic_vector(7 downto 0);
+        dip1      : in std_logic_vector(7 downto 0);
+        dip2      : in std_logic_vector(7 downto 0);
 
-         -- video output
-         red       : out std_logic_vector(7 downto 0);
-         grn       : out std_logic_vector(7 downto 0);
-         blu       : out std_logic_vector(7 downto 0);
-         hsync     : out std_logic;
-         hblank    : out std_logic;
-         vsync     : out std_logic;
-         vblank    : out std_logic;
-         pxclk     : out std_logic;
+        -- video output
+        red       : out std_logic_vector(7 downto 0);
+        grn       : out std_logic_vector(7 downto 0);
+        blu       : out std_logic_vector(7 downto 0);
+        hsync     : out std_logic;
+        hblank    : out std_logic;
+        vsync     : out std_logic;
+        vblank    : out std_logic;
+        xpixel    : out std_logic_vector(7 downto 0);
+        ypixel    : out std_logic_vector(7 downto 0);
+        pxclk     : out std_logic;
 
-         -- audio output
-         audio     : out std_logic_vector(17 downto 0);
-         aclk48k   : out std_logic
-         );
+        -- audio output
+        audio     : out std_logic_vector(17 downto 0);
+        aclk48k   : out std_logic
+      );
 end entity time_pilot;
 
 -- ======================================================================
@@ -86,12 +95,14 @@ architecture behaviour of time_pilot is
   signal tm7_data_out      : std_logic_vector(7 downto 0);
 
   -- RAMs
-  signal mz80_sprite_we    : std_logic;
-  signal mz80_sprite_rdata : std_logic_vector(7 downto 0);
-  signal rast_sprite_data  : std_logic_vector(7 downto 0);
-  signal mz80_tile_we      : std_logic;
-  signal mz80_tile_rdata   : std_logic_vector(7 downto 0);
-  signal rast_tile_data    : std_logic_vector(7 downto 0);
+  signal mz80_sprite_wel   : std_logic;
+  signal mz80_sprite_weh   : std_logic;
+  signal mz80_sprite_datal : std_logic_vector(7 downto 0);
+  signal mz80_sprite_datah : std_logic_vector(7 downto 0);
+  signal mz80_tilec_we     : std_logic;
+  signal mz80_tilec_rdata  : std_logic_vector(7 downto 0);
+  signal mz80_tilev_we     : std_logic;
+  signal mz80_tilev_rdata  : std_logic_vector(7 downto 0);
   signal mz80_ram_we       : std_logic;
   signal mz80_ram_rdata    : std_logic_vector(7 downto 0);
   signal az80_ram_we       : std_logic;
@@ -110,19 +121,31 @@ architecture behaviour of time_pilot is
   signal mz80_halt         : std_logic;
   signal mz80_busak        : std_logic;
   signal mz80_nmi          : std_logic;
+  signal mz80_pnmi         : std_logic;
 
   -- rasterizer interface
   signal rast_red          : std_logic_vector(7 downto 0);
   signal rast_grn          : std_logic_vector(7 downto 0);
   signal rast_blu          : std_logic_vector(7 downto 0);
+  signal rast_xpixel       : std_logic_vector(7 downto 0);
   signal rast_pixel_clk    : std_logic;
   signal rast_hsync        : std_logic;
   signal rast_hblank       : std_logic;
   signal rast_vsync        : std_logic;
   signal rast_vblank       : std_logic;
+  signal rast_pvblank      : std_logic;
   signal rast_video_line   : std_logic_vector(7 downto 0);
-  signal rast_addr         : std_logic_vector(14 downto 0);
-  signal rast_data         : std_logic_vector(7 downto 0);
+  signal rast_sprom_addr   : std_logic_vector(13 downto 0);
+  signal rast_sprom_data   : std_logic_vector(7 downto 0);
+  signal rast_strom_addr   : std_logic_vector(12 downto 0);
+  signal rast_spram_addr   : std_logic_vector(9 downto 0);
+  signal rast_spraml_data  : std_logic_vector(7 downto 0);
+  signal rast_spramh_data  : std_logic_vector(7 downto 0);
+  signal rast_tiram_addr   : std_logic_vector(9 downto 0);
+  signal rast_tcram_data   : std_logic_vector(7 downto 0);
+  signal rast_tvram_data   : std_logic_vector(7 downto 0);
+  signal rast_pprom_addr   : std_logic_vector(7 downto 0);
+  signal rast_tprom_addr   : std_logic_vector(7 downto 0);
 
   -- rasterizer integration
   signal mz80_nmi_enable   : std_logic;
@@ -138,7 +161,6 @@ architecture behaviour of time_pilot is
   signal audio_select_2    : std_logic_vector(1 downto 0);
   signal audio_data        : std_logic_vector(17 downto 0);
   signal audio_strobe      : std_logic;
-  signal audio_clk         : std_logic;
   signal audio_psgnew      : std_logic;
 
   -- discrete inputs
@@ -193,17 +215,18 @@ architecture behaviour of time_pilot is
 
 begin  -- behaviour
 
-  -- derive the 3.072 MHz clock for the main Z80
+  -- derive the 3.072 MHz clock for the main Z80 (div 12)
   main_t80_clock : process(mclk, mreset)
     variable lcount : unsigned(7 downto 0);
   begin
     if (mreset = '1') then
       lcount := X"00";
+      mz80_clk <= '0';
     elsif (mclk'event and mclk = '1') then
-      if (lcount = X"0b") then
+      if (lcount = X"05") then
         mz80_clk <= '1';
         lcount := lcount + 1;
-      elsif (lcount = X"17") then
+      elsif (lcount = X"0b") then
         mz80_clk <= '0';
         lcount := X"00";
       else
@@ -212,17 +235,18 @@ begin  -- behaviour
     end if;
   end process main_t80_clock;
 
-  -- derive a 1.8432 MHz clock for the audio Z80 (3% faster than original)
+  -- derive a 1.8432 MHz clock for the audio Z80 (div 20) (3% faster than original)
   audio_t80_clock : process(mclk, mreset)
     variable lcount : unsigned(7 downto 0);
   begin
     if (mreset = '1') then
       lcount := X"00";
+      az80_clk <= '0';
     elsif (mclk'event and mclk = '1') then
-      if (lcount = X"13") then
+      if (lcount = X"09") then
         az80_clk <= '1';
         lcount := lcount + 1;
-      elsif (lcount = X"27") then
+      elsif (lcount = X"13") then
         az80_clk <= '0';
         lcount := X"00";
       else
@@ -231,17 +255,18 @@ begin  -- behaviour
     end if;
   end process audio_t80_clock;
 
-  -- derive the 12.288 MHz AC97 bit clock of arbitrary phase
+  -- derive the 12.288 MHz AC97 bit clock of arbitrary phase (div 3)
   ac97_clock : process(mclk, mreset)
     variable lcount : unsigned(7 downto 0);
   begin
     if (mreset = '1') then
       lcount := X"00";
+      ac97_bit_clk <= '0';
     elsif (mclk'event and mclk = '1') then
-      if (lcount = X"02") then
+      if (lcount = X"01") then
         ac97_bit_clk <= '1';
         lcount := lcount + 1;
-      elsif (lcount = X"05") then
+      elsif (lcount = X"02") then
         ac97_bit_clk <= '0';
         lcount := X"00";
       else
@@ -274,31 +299,31 @@ begin  -- behaviour
 
   TM4_ROM : entity work.tm4
     port map (
-      addr => rast_addr(12 downto 0),
+      addr => rast_sprom_addr(12 downto 0),
       dout => tm4_data_out
     );
 
   TM5_ROM : entity work.tm5
     port map (
-      addr => rast_addr(12 downto 0),
+      addr => rast_sprom_addr(12 downto 0),
       dout => tm5_data_out
     );
 
   TM6_ROM : entity work.tm6
     port map (
-      addr => rast_addr(12 downto 0),
+      addr => rast_strom_addr,
       dout => tm6_data_out
     );
 
   E9_ROM : entity work.e9
     port map (
-      addr => rast_addr(7 downto 0),
+      addr => rast_pprom_addr,
       dout => e9_data_out
     );
 
   E12_ROM : entity work.e12
     port map (
-      addr => rast_addr(7 downto 0),
+      addr => rast_tprom_addr,
       dout => e12_data_out
     );
 
@@ -312,47 +337,88 @@ begin  -- behaviour
   -- RAMs
   -- =======================================================================
 
-  SPRITE_RAM : entity work.dpram2k
+  SPRITE_RAM_L : entity work.dpram1k
     port map (
       clka  => mz80_clk,
       clkb  => mclk,
       ena   => '1',
       enb   => '1',
-      wea   => mz80_sprite_we,
+      wea   => mz80_sprite_wel,
       web   => '0',
-      addra => mz80_addr(10 downto 0),
-      addrb => rast_addr(10 downto 0),
+      addra => mz80_addr(9 downto 0),
+      addrb => rast_spram_addr,
       dia   => mz80_data_out,
       dib   => (others => '0'),
-      doa   => mz80_sprite_rdata,
-      dob   => rast_sprite_data
+      doa   => mz80_sprite_datal,
+      dob   => rast_spraml_data
     );
 
-  mz80_sprite_we <= '1' when ((mz80_mreq = '0') and
-                              (mz80_wr = '0') and
-                              (mz80_addr(15 downto 11) = "10110"))
-                    else '0';
+  mz80_sprite_wel <= '1' when ((mz80_mreq = '0') and
+                               (mz80_wr = '0') and
+                               (mz80_addr(15 downto 10) = "101100"))
+                     else '0';
 
-  TILE_RAM : entity work.dpram2k
+  SPRITE_RAM_H : entity work.dpram1k
     port map (
       clka  => mz80_clk,
       clkb  => mclk,
       ena   => '1',
       enb   => '1',
-      wea   => mz80_tile_we,
+      wea   => mz80_sprite_weh,
       web   => '0',
-      addra => mz80_addr(10 downto 0),
-      addrb => rast_addr(10 downto 0),
+      addra => mz80_addr(9 downto 0),
+      addrb => rast_spram_addr,
       dia   => mz80_data_out,
       dib   => (others => '0'),
-      doa   => mz80_tile_rdata,
-      dob   => rast_tile_data
+      doa   => mz80_sprite_datah,
+      dob   => rast_spramh_data
     );
 
-  mz80_tile_we <= '1' when ((mz80_mreq = '0') and
-                            (mz80_wr = '0') and
-                            (mz80_addr(15 downto 11) = "10100"))
-                  else '0';
+  mz80_sprite_weh <= '1' when ((mz80_mreq = '0') and
+                               (mz80_wr = '0') and
+                               (mz80_addr(15 downto 10) = "101101"))
+                     else '0';
+
+  TILE_COLOR_RAM : entity work.dpram1k
+    port map (
+      clka  => mz80_clk,
+      clkb  => mclk,
+      ena   => '1',
+      enb   => '1',
+      wea   => mz80_tilec_we,
+      web   => '0',
+      addra => mz80_addr(9 downto 0),
+      addrb => rast_tiram_addr,
+      dia   => mz80_data_out,
+      dib   => (others => '0'),
+      doa   => mz80_tilec_rdata,
+      dob   => rast_tcram_data
+    );
+
+  TILE_VIDEO_RAM : entity work.dpram1k
+    port map (
+      clka  => mz80_clk,
+      clkb  => mclk,
+      ena   => '1',
+      enb   => '1',
+      wea   => mz80_tilev_we,
+      web   => '0',
+      addra => mz80_addr(9 downto 0),
+      addrb => rast_tiram_addr,
+      dia   => mz80_data_out,
+      dib   => (others => '0'),
+      doa   => mz80_tilev_rdata,
+      dob   => rast_tvram_data
+    );
+
+  mz80_tilec_we <= '1' when ((mz80_mreq = '0') and
+                             (mz80_wr = '0') and
+                             (mz80_addr(15 downto 10) = "101000"))
+                   else '0';
+  mz80_tilev_we <= '1' when ((mz80_mreq = '0') and
+                             (mz80_wr = '0') and
+                             (mz80_addr(15 downto 10) = "101001"))
+                   else '0';
 
   MZ80_RAM : entity work.ram2k
     port map (
@@ -409,15 +475,31 @@ begin  -- behaviour
     );
 
   mz80_reset <= not mreset;
-  mz80_nmi   <= not rast_vblank or not mz80_nmi_enable;
+
+  -- NMI vertical blanking
+  MZ80NMI : process(mz80_reset, mz80_clk, rast_vblank) is
+  begin
+    if (mz80_reset = '0') then
+      mz80_nmi <= '1';
+    elsif mz80_clk'event and mz80_clk = '0' then
+      rast_pvblank <= rast_vblank;
+      if mz80_nmi_enable = '0' then
+        mz80_nmi <= '1';
+      elsif (rast_pvblank = '0') and (rast_vblank = '1') then
+        mz80_nmi <= '0';
+      end if;
+    end if;
+  end process;
   
   mz80_data_in <=
     tm1_data_out when (mz80_addr(15 downto 13) = "000") else
     tm2_data_out when (mz80_addr(15 downto 13) = "001") else
     tm3_data_out when (mz80_addr(15 downto 13) = "010") else
-    mz80_tile_rdata when (mz80_addr(15 downto 11) = "10100") else    -- tile RAM
+    mz80_tilec_rdata when (mz80_addr(15 downto 10) = "101000") else   -- tile color RAM
+    mz80_tilev_rdata when (mz80_addr(15 downto 10) = "101001") else   -- tile video RAM    
     mz80_ram_rdata when (mz80_addr(15 downto 11) = "10101") else     -- program RAM
-    mz80_sprite_rdata when (mz80_addr(15 downto 11) = "10110") else  -- sprite RAM
+    mz80_sprite_datal when (mz80_addr(15 downto 10) = "101100") else  -- sprite RAM low
+    mz80_sprite_datah when (mz80_addr(15 downto 10) = "101101") else  -- sprite RAM hi
     rast_video_line when (mz80_addr(15 downto 4) = X"c00") else      -- video scan line
     dip2 when (mz80_addr(15 downto 4) = X"c20") else  -- DIP switch 2
     iw1 when (mz80_addr(15 downto 4) = X"c30") else   -- inputs 1
@@ -425,6 +507,59 @@ begin  -- behaviour
     iw3 when (mz80_addr(15 downto 4) = X"c34") else   -- inputs 3
     dip1 when (mz80_addr(15 downto 4) = X"c36") else  -- DIP switch 1
     X"ff";
+
+  -- log NMI, reads of video scan line, writes to sprite and tile ram
+  g_loginfo : if LOGINFO generate
+    p_loginfo : process(mz80_clk)
+      variable l : line;
+    begin
+      if mz80_clk'event and (mz80_clk = '1') then
+        mz80_pnmi <= mz80_nmi;
+        
+        if (mz80_addr(15 downto 4) = X"c00") and (mz80_mreq = '0') and (mz80_rd = '0') then
+          write(l, now);
+          write(l, string'(": read video line="));
+          hwrite(l, rast_video_line);
+          writeline(output, l);
+        end if;
+        if (mz80_addr = X"c300") and (mz80_mreq = '0') and (mz80_wr = '0') then
+          write(l, now);
+          write(l, string'(": NMI enable="));
+          hwrite(l, mz80_data_out);
+          writeline(output, l);
+        end if;
+        if (mz80_sprite_wel = '1') or (mz80_sprite_weh = '1') then
+          write(l, now);
+          write(l, string'(": sprite @"));
+          hwrite(l, mz80_addr);
+          write(l, string'("="));
+          hwrite(l, mz80_data_out);
+          writeline(output, l);
+        end if;
+        if (mz80_tilec_we = '1') then
+          write(l, now);
+          write(l, string'(": tile color @"));
+          hwrite(l, mz80_addr);
+          write(l, string'("="));
+          hwrite(l, mz80_data_out);
+          writeline(output, l);
+        end if;
+        if (mz80_tilev_we = '1') then
+          write(l, now);
+          write(l, string'(": tile video @"));
+          hwrite(l, mz80_addr);
+          write(l, string'("="));
+          hwrite(l, mz80_data_out);
+          writeline(output, l);
+        end if;
+        if (mz80_pnmi = '1') and (mz80_nmi = '0') then
+          write(l, now);
+          write(l, string'(": NMI"));
+          writeline(output, l);
+        end if;
+      end if;
+    end process p_loginfo;
+  end generate g_loginfo;
 
   -- Main Z80 integration
   MZ80W : process(mz80_reset, mz80_clk) is
@@ -457,7 +592,6 @@ begin  -- behaviour
   iw2 <= "111" & fire & joy_down & joy_up & joy_right & joy_left;
   iw3 <= "111" & fire & joy_down & joy_up & joy_right & joy_left;
 
-
   -- =======================================================================
   -- Rasterizer
   -- =======================================================================
@@ -470,24 +604,31 @@ begin  -- behaviour
       rgb_out_grn         => rast_grn,
       rgb_out_blu         => rast_blu,
       rgb_out_pixel_clock => rast_pixel_clk,
+      rgb_out_x           => rast_xpixel,      
       rgb_hsync           => rast_hsync,
       rgb_hblank          => rast_hblank,
       rgb_vsync           => rast_vsync,
       rgb_vblank          => rast_vblank,
       video_line          => rast_video_line,
-      rram_addr           => rast_addr,
-      rram_dout           => rast_data
+
+      sprom_addr          => rast_sprom_addr,
+      sprom_data          => rast_sprom_data,
+      strom_addr          => rast_strom_addr,
+      strom_data          => tm6_data_out,
+      spram_addr          => rast_spram_addr,
+      spraml_data         => rast_spraml_data,
+      spramh_data         => rast_spramh_data,
+      tiram_addr          => rast_tiram_addr,
+      tcram_data          => rast_tcram_data,
+      tvram_data          => rast_tvram_data,
+      pprom_addr          => rast_pprom_addr,
+      pprom_data          => e9_data_out(3 downto 0),
+      tprom_addr          => rast_tprom_addr,
+      tprom_data          => e12_data_out(3 downto 0)
     );
 
-  rast_data <=
-    tm4_data_out when (rast_addr(14 downto 13) = "00") else
-    tm5_data_out when (rast_addr(14 downto 13) = "01") else
-    tm6_data_out when (rast_addr(14 downto 13) = "10") else
-    rast_sprite_data when (rast_addr(14 downto 11) = "1101") else
-    rast_tile_data when (rast_addr(14 downto 11) = "1110") else
-    e9_data_out when (rast_addr(14 downto 8) = "1111000") else
-    e12_data_out when (rast_addr(14 downto 8) = "1111001") else
-    X"ff";
+  rast_sprom_data <= tm4_data_out when rast_sprom_addr(13) = '0' else
+                     tm5_data_out;
 
   red    <= rast_red;
   grn    <= rast_grn;
@@ -497,6 +638,8 @@ begin  -- behaviour
   hsync  <= rast_hsync;
   hblank <= rast_hblank;
   pxclk  <= rast_pixel_clk;
+  xpixel <= rast_xpixel;
+  ypixel <= rast_video_line;
 
   -- =======================================================================
   -- audio Z80

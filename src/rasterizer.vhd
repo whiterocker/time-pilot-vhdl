@@ -27,40 +27,38 @@
 -- 256x256 CRT:
 --
 -- horizontal:
--- __        ___________________________________________________
---   |_ _ __|                                                   |_
+-- __ _   __ ___________________________________________________
+--   |_|_|__|                                                   |_
 --    A B C                             D
 --
--- A =   2 pixels
--- B =  10 pixels
--- C =   5 pixels
 -- D = 256 pixels
+-- A =   1 pixel back porch
+-- B =  22 pixels sync
+-- C =   1 pixel front porch
 --     ----------
---     273 pixels
+--     280 pixels
 --
 -- vertical:
--- __        ___________________________________________________
---   |_ _ __|                                                   |_
+-- __ _   __ ___________________________________________________
+--   |_|_|__|                                                   |_
 --    E F G                             H
 --
--- E =   5 lines
--- F =   1 line
--- G =  10 lines
 -- H = 256 lines
+-- E =   8 lines back porch
+-- F =   3 lines sync
+-- G =  11 lines front porch
 --     ---------
---     272 lines
+--     278 lines
 --
--- Video data is held in a 32 kiB dual-port RAM that is byte-addressable in this
--- implementation.  The dual-port RAM is organized as follows:
+-- Video data is held ROMs and in two 2 kiB dual-port RAMs that are byte-addressable
+-- in this implementation.  The dual-port RAM is organized as follows:
 --
--- 0x0000 to 0x3fff  sprite tiles ROM     16 KiB
--- 0x4000 to 0x5fff  static tiles ROM      8 KiB
--- 0x6000 to 0x67ff  (reserved)            2 KiB
--- 0x6800 to 0x6fff  sprite RAM            2 KiB
--- 0x7000 to 0x77ff  tile RAM              2 KiB
--- 0x7800 to 0x78ff  sprite palette ROM    256 B
--- 0x7900 to 0x79ff  tile palette ROM      256 B
--- 0x7a00 to 0x7fff  (reserved)           
+-- sprite tiles ROM     16 KiB
+-- static tiles ROM      8 KiB
+-- sprite RAM            2 KiB
+-- tile RAM              2 KiB
+-- sprite palette ROM    256 B
+-- tile palette ROM      256 B
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -74,13 +72,28 @@ entity rasterizer is
    rgb_out_grn:         out std_logic_vector(7 downto 0);
    rgb_out_blu:         out std_logic_vector(7 downto 0);
    rgb_out_pixel_clock: out std_logic;
+   rgb_out_x:           out std_logic_vector(7 downto 0);
    rgb_hsync:           out std_logic;
    rgb_hblank:          out std_logic;  -- active-high
    rgb_vsync:           out std_logic;
    rgb_vblank:          out std_logic;  -- active-high
    video_line:          out std_logic_vector(7 downto 0);
-   rram_addr:           out std_logic_vector(14 downto 0);
-   rram_dout:           in std_logic_vector(7 downto 0));
+
+   sprom_addr:          out std_logic_vector(13 downto 0);
+   sprom_data:          in std_logic_vector(7 downto 0);
+   strom_addr:          out std_logic_vector(12 downto 0);
+   strom_data:          in std_logic_vector(7 downto 0);  
+   spram_addr:          out std_logic_vector(9 downto 0);
+   spraml_data:         in std_logic_vector(7 downto 0);
+   spramh_data:         in std_logic_vector(7 downto 0);
+   tiram_addr:          out std_logic_vector(9 downto 0);
+   tcram_data:          in std_logic_vector(7 downto 0);
+   tvram_data:          in std_logic_vector(7 downto 0);
+   pprom_addr:          out std_logic_vector(7 downto 0);
+   pprom_data:          in std_logic_vector(3 downto 0);
+   tprom_addr:          out std_logic_vector(7 downto 0);
+   tprom_data:          in std_logic_vector(3 downto 0)
+ );
 
  attribute SIGIS : string;
  attribute SIGIS of clk                 : signal is "CLK";
@@ -90,9 +103,6 @@ entity rasterizer is
 end entity rasterizer;
 
 -- Maintain sline which is the scan line of the output signal.
--- The first sixteen lines, 0..15, are the VSYNC pulse.
--- When sline is 15..270, the line (sline-15) is composed.
--- When sline is 16..271, the line (sline-16) is output.
 
 architecture behaviour of rasterizer is
 
@@ -103,23 +113,23 @@ architecture behaviour of rasterizer is
       a    : in  std_logic_vector(8 downto 0);
       dpra : in  std_logic_vector(8 downto 0);
       di   : in  std_logic_vector(4 downto 0);
-      dpo  : out std_logic_vector(4 downto 0));
+      dpo  : out std_logic_vector(4 downto 0)
+    );
   end component;
 
   for pixel_buf : pixel_ram use entity work.pixel_ram;
 
   signal pixel_clk : std_logic;  
-  signal div15  : unsigned(3 downto 0);
-  signal sline  : unsigned(8 downto 0);  -- scan vertical (272 lines)
-  signal vpos   : unsigned(8 downto 0);  -- frame vertical (256x256)
-  signal vpos2  : unsigned(8 downto 0);  -- frame vertical (256x256)
-  signal vsync  : std_logic;
-  signal vblank : std_logic;
-  signal spixel : unsigned(8 downto 0);  -- scan pixel count (273 per line)
-  signal hpos   : unsigned(7 downto 0);  -- frame horizontal (256x256)
-  signal hsync  : std_logic;
-  signal hblank : std_logic;
-  signal colour : std_logic_vector(4 downto 0);
+  signal div8    : unsigned(3 downto 0);
+  signal sline   : unsigned(8 downto 0) := (others => '0');  -- scan vertical (278 lines)
+  signal vpos    : unsigned(7 downto 0);  -- frame vertical (256x256)
+  signal vpos2   : unsigned(7 downto 0);  -- frame vertical (256x256)
+  signal vblank  : std_logic;
+  signal spixel  : unsigned(8 downto 0) := (others => '0');  -- scan pixel count (280 per line)
+  signal hpos    : unsigned(7 downto 0);  -- frame horizontal (256x256)
+  signal hblank  : std_logic;
+  signal phblank : std_logic;
+  signal colour  : std_logic_vector(4 downto 0);
 
   constant zero8  : unsigned := "00000000";
   constant zero10 : unsigned := "0000000000";
@@ -131,46 +141,38 @@ architecture behaviour of rasterizer is
   signal pixel_wdata : std_logic_vector(4 downto 0);
   signal pixel_rdata : std_logic_vector(4 downto 0);
 
-  subtype state_type is unsigned(4 downto 0);
-  constant INIT                     : state_type := "11111";
+  subtype state_type is unsigned(3 downto 0);
+  constant INIT                     : state_type := "0000";
 
-  constant SELECT_TILE_B0           : state_type := "00000";
-  constant SELECT_TILE_B1           : state_type := "00001";
-  constant GET_TILE_B0_SEL_B1       : state_type := "00010";
-  constant GET_TILE_B1_SEL_PI       : state_type := "00011";
-  constant SELECT_TILE_PI           : state_type := "00100";
-  constant WAIT_PALETTE_INDEX       : state_type := "00101";  
-  constant GET_TILE_PALETTE_INDEX   : state_type := "00110";
-  constant WAIT_TILE_PIXEL          : state_type := "00111";
-  constant GET_TILE_PIXEL           : state_type := "01000";
-  constant ADVANCE_TILE_PIXEL       : state_type := "01001";
+  constant GET_TILE_BYTES           : state_type := "0001";
+  constant GET_TILE_PIXEL           : state_type := "0010";
+  constant ADVANCE_TILE_PIXEL       : state_type := "0011";
 
-  constant SELECT_SPRITE_B2         : state_type := "10000";
-  constant GET_SPRITE_B2_SEL_B0     : state_type := "10001";
-  constant GET_SPRITE_B0_SEL_B1     : state_type := "10010";
-  constant CALC_SPRITE_ROW          : state_type := "10011";
-  constant GET_SPRITE_PALETTE_INDEX : state_type := "10100";
-  constant GET_SPRITE_B1_SEL_B3     : state_type := "10101";
-  constant GET_SPRITE_B3_SEL_PI     : state_type := "10110";
-  constant SELECT_SPRITE_PI         : state_type := "10111";
-  constant GET_SPRITE_PIXEL         : state_type := "11000";
-  constant ADVANCE_SPRITE_PIXEL     : state_type := "11001";
-  
+  constant GET_SPRITE_B31_SEL_B20   : state_type := "1000";
+  constant GET_SPRITE_B20           : state_type := "1001";
+  constant CHECK_SPRITE_ROW         : state_type := "1010";
+  constant GET_SPRITE_PIXEL         : state_type := "1011";
+  constant ADVANCE_SPRITE_PIXEL     : state_type := "1100";
 
   -- main rasterizer FSM state
   signal state      : state_type;
-  -- tile plane
-  signal plane      : std_logic;
+  -- desired and current tile plane
+  signal dplane, tplane : std_logic;
+  -- tile flip x/y
+  signal tflipx, tflipy : std_logic;
+  -- sprite flip x/y
+  signal sflipx, sflipy : std_logic;
   -- tile/sprite bytes as described above
-  signal b0, b1, b2, b3 : std_logic_vector(7 downto 0);
+  signal tb0, tb1           : std_logic_vector(7 downto 0);
+  signal sb0, sb1, sb2, sb3 : std_logic_vector(7 downto 0);
   -- element index into the tile or sprite ROM
   signal index      : unsigned(4 downto 0);
   -- horizontal pixel position within tile on screen (always left-to-right)
   signal thpos      : unsigned(2 downto 0);
-  -- horizontal pixel position within tile ROM: forward or reverse of thpos
-  signal thoff      : std_logic_vector(2 downto 0);
-  -- vertical half-tile offset, reflects whether tile is vertically flipped
-  signal tvoff      : std_logic;
+  -- horizontal half-tile offset, reflects whether tile is vertically flipped
+  signal thoff      : std_logic;
+  -- vertical pixel position within tile ROM: forward or reverse of thpos
+  signal tvoff      : std_logic_vector(2 downto 0);
   -- pixel's location in tile ROM byte is 0x88 shifted right by this amount
   signal tpshift    : std_logic_vector(1 downto 0);
   -- palette index for current sprite pixel
@@ -178,130 +180,122 @@ architecture behaviour of rasterizer is
   -- active sprite row calculated from sprite's Y coordinate and vertical
   -- orientation (normal and flipped row cached to meet timing) 
   signal sprow, nrow, frow : unsigned(7 downto 0);
-  -- active sprite pixel X position
+  -- active sprite pixel X
   signal sprpx      : unsigned(7 downto 0);
   -- horizontal pixel position within sprite on screen (always left-to-right)
   signal shpos      : unsigned(3 downto 0);
   -- horizontal pixel position within sprite ROM: forward or reverse of shpos
   signal shoff      : unsigned(3 downto 0);
+  -- sprite low/high byte select
+  signal splohi     : std_logic;
 
 begin  -- behaviour
 
   rgb_out_pixel_clock <= pixel_clk;
   
   -- free-running pixel position counters and pixel clock
-  -- input clock is 73.728 MHz, pixel clock is 4.9152 MHz
-  -- sline is  0..271
-  -- vpos  is 15..270
-  -- vpos2 is 16..271
+  -- input clock is 36.864 MHz, pixel clock is 4.608 MHz (div 8)
+  -- sline is 0..277 and spixel is 0..279
   count: process(clk, reset)
   begin
     if reset = '1' then
-      div15     <= "0000";
-      spixel    <= "000000000";
-      hpos      <= X"00";
-      sline     <= "000000000";
+      div8      <= "0000";
+      spixel    <= (others => '0');
+      sline     <= (others => '0');
       pixel_clk <= '0';
     elsif clk'event and clk = '0' then
-      case div15 is
-        when X"1" => div15 <= X"2";
-                  if (spixel = 272) then
-                    hpos   <= X"00";
-                    spixel <= "000000000";
-                    if (sline = 271) then
-                      sline <= "000000000";
-                    else
-                      sline <= sline + 1;
-                    end if;
-                  elsif (spixel > 16) then
-                    hpos   <= hpos + 1;
-                    spixel <= spixel + 1;
-                  else
-                    hpos   <= X"00";
-                    spixel <= spixel + 1;
-                  end if;
-        when X"2" => div15 <= X"3"; pixel_clk <= '1';
-        when X"9" => div15 <= X"a"; pixel_clk <= '0';
-        when X"e" => div15 <= X"0";
-        when others => div15 <= div15 + 1;
+      case div8 is
+        when X"1" => div8 <= X"2";
+           if (spixel = 279) then
+             spixel <= (others => '0');
+             if (sline = 277) then
+               sline <= (others => '0');
+             else
+               sline <= sline + 1;
+             end if;
+           else
+             spixel <= spixel + 1;
+           end if;
+        when X"3" => div8 <= X"4"; pixel_clk <= '1';
+        when X"7" => div8 <= X"0"; pixel_clk <= '0';
+        when others => div8 <= div8 + 1;
       end case;
     end if;
   end process count;
 
-  vpos <=
-    (sline - 15) when ((sline >= 15) and (sline <= 270)) else
-    "000000000";
-  vpos2 <=
-    (sline - 16) when ((sline >= 16) and (sline <= 271)) else
-    "000000000";
+  hpos  <= spixel(7 downto 0) when (spixel <= 255) else X"00";
+  vpos  <= sline(7 downto 0) when (sline <= 255) else X"00";
+  vpos2 <= vpos - 1;
 
-  -- horizontal and vertical sync pulses
-  sync: process(clk, reset)
-  begin  -- process sync
-    if reset = '1' then               -- asynchronous reset (active low)
-      hsync  <= '1';
-      hblank <= '1';
-      vsync  <= '1';
-      vblank <= '1';
-    elsif clk'event and clk = '0' then  -- falling clock edge
-      if (spixel <= 16) then
-        hblank <= '1';
-      else
-        hblank <= '0';
-      end if;
-      if (spixel >= 2) and (spixel <= 11) then
-        hsync <= '0';
-      else
-        hsync <= '1';
-      end if;
-      if (sline <= 15) then
-        vblank <= '1';
-      else
-        vblank <= '0';
-      end if;
-      if (sline = 5) then
-        vsync <= '0';
-      else
-        vsync <= '1';
-      end if;
-    end if;
-  end process sync;
-
-  rgb_vsync  <= vsync;
+  -- horizontal and vertical sync and blank pulses
+  rgb_hsync  <= '0' when ((spixel >= 257) and (spixel < 279)) else '1';
+  rgb_vsync  <= '0' when ((sline >= 264) and (sline < 267)) else '1';  
+  hblank <= '1' when (spixel > 255) else '0';
+  vblank <= '1' when (sline > 255) else '0';
   rgb_vblank <= vblank;
-  rgb_hsync  <= hsync;
   rgb_hblank <= hblank;
 
-  -- video line
-  video_line <= std_logic_vector(vpos2(7 downto 0));
+  -- raster position
+  rgb_out_x  <= std_logic_vector(hpos);
+  video_line <= std_logic_vector(vpos2);
+
+  -----------------------------------------------------------------------------
+  -- screen renders flipped on its side:
+  --
+  -- (origin) 16 lines of black
+  --     +-------------------------+0
+  --     |                         |0
+  -- P   |                         |
+  -- U   |                         |T
+  -- -   |                         |I
+  -- 2   |                         |D
+  --     |                         |E
+  --     |                         |R
+  --     |                         |C
+  --     |                         |
+  -- E   |                         |
+  -- R0  |                         |
+  -- O0  |                         |
+  -- C0  |                         |
+  -- S0  |                         |
+  -- -1  |                         |
+  -- I   |                         |
+  -- H   |                         |
+  --     |                         |
+  --     |                         |
+  --     |                         |
+  --  0  |                         |
+  -- P0  |                         |
+  -- U   |                         |
+  -- -   |                         |
+  -- 1   |                         |
+  --     |                         |
+  --     +-------------------------+
+  -- 16 lines of black
 
   -----------------------------------------------------------------------------
   -- tile RAM: 16 bits per playfield tile position, 32x32=1024 tiles
-  -- 0x7000: b0 .. .. ..    .. .. .. ..
+  -- color RAM:
+  -- 0x000: b0 .. .. ..    .. .. .. ..
+  -- 
+  -- 0x3f0: .. .. .. ..    .. .. .. b0
+  -- video RAM:
+  -- 0x400: b1 .. .. ..    .. .. .. ..
   --
-  -- 0x73f0: .. .. .. ..    .. .. .. b0
-  -- 0x7400: b1 .. .. ..    .. .. .. ..
+  -- 0x7ff: .. .. .. ..    .. .. .. b1
   --
-  -- 0x77ff: .. .. .. ..    .. .. .. b1
-  --
-  -- For each tile: x=(8*((addr & 0x3e0) >> 5)), y=(8*(addr & 0x1f)),
-  -- plane=(((b0 & 0x20) << 3) | b1), pal_base=(b0 & 0x1f),
+  -- For each tile: romoff=(((b0 & 0x20) << 3) | b1), pal_base=(b0 & 0x1f),
   -- flipx=(b0 & 0x40), flipy=(b0 & 0x80)
   --
   -- Each static tile is 8x8 pixels, each pixel is 2 bits, so each tile is 16
-  -- bytes long.  The 16-byte tile is organized as follows.  If b0_7 is the
-  -- most-significant bit of byte 0, and bf_0 is the least-significant bit of
-  -- byte f, then 2-bit pixels are derived as:
+  -- bytes long.  The 16-byte tile is organized as follows (no flipping).  If
+  -- b0_7 is the most-significant bit of byte 0, and bf_0 is the least-significant
+  -- bit of byte f, then 2-bit pixels are derived as:
   --
-  -- (0,0) is [b7_7,b7_3] .. (7,0) is [b0_7,b0_3]
-  --                      ..
-  -- (0,3) is [b7_4,b7_0] .. (7,3) is [b0_4,b0_0]
-  -- (0,4) is [bf_7,bf_3] .. (7,4) is [b8_7,b8_3]
-  --                      ..
-  -- (0,7) is [bf_4,bf_0] .. (7,7) is [b8_4,b8_0]
+  -- (0,0) is [b0_7,b0_3] .. (3,0) is [b0_4,b0_0] (4,0) is [b8_7,b8_3] .. (7,0) is [b8_4,b8_0]
+  --                                             ..
+  -- (0,7) is [b7_7,bf_3] .. (3,0) is [b7_4,b7_0] (4,0) is [bf_7,bf_3] .. (7,0) is [bf_4,bf_0]
   --
-  -- Therefore, each tile row requires a maximum of 10 byte reads, with 32
-  -- tiles per line, each line requires 320 read cycles (per plane).
   -----------------------------------------------------------------------------
 
   -----------------------------------------------------------------------------
@@ -309,56 +303,92 @@ begin  -- behaviour
   --
   -- Unlike tile RAM which is organized in a playfield matrix, the sprite data
   -- block describes the x,y location of each sprite as well as other
-  -- operational parameters such as the applicable sprite tile in the 32-bit
+  -- operational parameters such as the applicable sprite tile in a 32-bit
   -- structure.
   --
-  -- 0x6810: b0 b1 .. ..    .. .. .. ..
-  -- 0x6820: .. .. .. ..    .. .. .. ..
-  -- 0x6830: .. .. .. ..    .. .. b0 b1
+  -- 0x010: b0 b1 .. ..    .. .. .. ..
+  -- 0x020: .. .. .. ..    .. .. .. ..
+  -- 0x030: .. .. .. ..    .. .. b0 b1
   --
-  -- 0x6c10: b2 b3 .. ..    .. .. .. ..
-  -- 0x6c20: .. .. .. ..    .. .. .. ..
-  -- 0x6c30: .. .. .. ..    .. .. b2 b3
+  -- 0x410: b2 b3 .. ..    .. .. .. ..
+  -- 0x420: .. .. .. ..    .. .. .. ..
+  -- 0x430: .. .. .. ..    .. .. b2 b3
   --
-  -- For each sprite: x=b3, y=b0, spr_tile=b1, pal_base=(b2 & 0x3f),
-  -- flipx=(b2 & 0x80), flipy=(b2 & 0x40)
+  -- For each sprite: y=(241-b3), x=b0, spr_tile=b1, pal_base=(b2 & 0x3f),
+  -- flipy=(b2 & 0x80), flipx=~(b2 & 0x40)
   --
   -- Each sprite tile is 16x16 pixels, each pixel is 2 bits, so each tile is 64
-  -- contiguous bytes long.  The 64-byte tile is organized as follows.  If b00_7
-  -- is the most-significant bit of byte 00, and b3f_0 is the least-significant
-  -- bit of byte 3f, then 2-bit pixels are derived as:
+  -- contiguous bytes long.  The 64-byte tile is organized as follows (no
+  -- flipping). If b00_7 is the most-significant bit of byte 00, and b3f_0 is
+  -- the least-significant bit of byte 3f, then 2-bit pixels are derived as:
   --
-  -- (00,00) is [b27_7,b27_3] .. (15,00) is [b00_7,b00_3]
-  --                          ..
-  -- (00,03) is [b27_4,b27_0] .. (15,03) is [b00_4,b00_0]
-  -- (00,04) is [b2f_7,b2f_3] .. (15,04) is [b08_7,b08_3]
-  --                          ..
-  -- (00,07) is [b2f_4,b2f_0] .. (15,07) is [b08_4,b08_0]
-  -- (00,08) is [b37_7,b37_3] .. (15,08) is [b10_7,b10_3]
-  --                          ..
-  -- (00,11) is [b37_4,b37_0] .. (15,11) is [b10_4,b10_0]
-  -- (00,12) is [b3f_7,b3f_3] .. (15,12) is [b18_7,b18_3]
-  --                          ..
-  -- (00,15) is [b3f_4,b3f_0] .. (15,15) is [b18_4,b18_0]
+  -- (0,0)[b00_3,b00_7] .. (3,0)[b00_0,b00_4] .. (7,0)[b08_0,b08_4] .. (b,0)[b10_0,b10_4] .. (f,0)[b18_0,b18_4]
+  --                                                            ..
+  -- (0,7)[b07_3,b07_7] .. (3,7)[b07_0,b07_4] .. (7,7)[b0f_0,b0f_4] .. (b,7)[b17_0,b17_4] .. (f,7)[b1f_0,b1f_4]
+  -- (0,8)[b20_3,b20_7] .. (3,8)[b20_0,b20_4] .. (7,8)[b28_0,b28_4] .. (b,7)[b30_0,b30_4] .. (f,8)[b38_0,b38_4]
+  --                                                            ..
+  -- (0,f)[b27_3,b27_7] .. (3,f)[b27_0,b27_4] .. (7,f)[b2f_0,b2f_4] .. (b,f)[b37_0,b37_4] .. (f,f)[b3f_0,b3f_4]
   --
-  -- Therefore, each sprite requires a maximum of 20 read cycles, and with 24
-  -- sprites checked per line, each line requires 480 read cycles.
   -----------------------------------------------------------------------------
+
+  -- tile flips and plane
+  tflipy <= not tb0(7);
+  tflipx <= not tb0(6);
+  tplane <= tb0(4);
   
-  -----------------------------------------------------------------------------
-  -- Using the 15x pixel clock, 4080 cycles are available per horizontal line.
-  -----------------------------------------------------------------------------
+  -- 3-bit vertical pixel position within tile
+  tvoff <= not std_logic_vector(vpos(2 downto 0)) when (tflipy = '0') else
+           std_logic_vector(vpos(2 downto 0));
 
-  -- 3-bit horizontal pixel position within tile
-  thoff <= std_logic_vector(thpos) when (b0(6) = '1') else
-           not std_logic_vector(thpos); 
+  -- 1-bit horizontal half-tile position
+  thoff <= not std_logic(thpos(2)) when (tflipx = '0') else
+           std_logic(thpos(2));
 
-  -- 1-bit vertical half-tile position
-  tvoff <= std_logic(vpos(2)) when (b0(7) = '0') else
-           not std_logic(vpos(2));
+  -- sprite normal and flipped row calculations (within sprite)
+  nrow <= (vpos + unsigned(sb3) - 241);         -- normal orientation: vpos - (241 - sy)
+  frow <= (unsigned(not sb3) - vpos);           -- flipped orientation: (241 - sy) + 15 - vpos
 
+  -- sprite flips
+  sflipy <= sb2(7);
+  sflipx <= not sb2(6);
+  
   -- 4-bit horizontal pixel position within sprite
-  shoff <= shpos when (b2(7) = '1') else not shpos;
+  shoff <= shpos when (sflipx = '0') else not shpos;
+
+  -- sprite bitmap ROM address
+  sprom_addr <= sb1 & std_logic(sprow(3)) &
+                std_logic_vector(shoff(3 downto 2)) &
+                std_logic_vector(sprow(2 downto 0));
+
+  -- sprite pixel x position
+  sprpx <= unsigned(sb0) + shpos;
+  
+  -- tile bitmap ROM address
+  strom_addr <= tb0(5) & tb1(7 downto 0) & thoff & tvoff;
+
+  -- tile color and video RAM address
+  tiram_addr <= std_logic_vector(vpos(7 downto 3)) & std_logic_vector(index);
+
+  -- tile bitmap bit selects
+  tpshift <= std_logic_vector(thpos(1 downto 0)) when (tflipx = '0') else
+             not std_logic_vector(thpos(1 downto 0));
+
+  -- tile color palette ROM address
+  tprom_addr <= '0' & tb0(4 downto 0) & strom_data(4) & strom_data(0) when (tpshift = "00") else
+                '0' & tb0(4 downto 0) & strom_data(5) & strom_data(1) when (tpshift = "01") else
+                '0' & tb0(4 downto 0) & strom_data(6) & strom_data(2) when (tpshift = "10") else
+                '0' & tb0(4 downto 0) & strom_data(7) & strom_data(3);
+
+  -- sprite color palette ROM address
+  spalix <= sprom_data(3) & sprom_data(7) when shoff(1 downto 0) = 0 else
+            sprom_data(2) & sprom_data(6) when shoff(1 downto 0) = 1 else
+            sprom_data(1) & sprom_data(5) when shoff(1 downto 0) = 2 else
+            sprom_data(0) & sprom_data(4);
+  
+  pprom_addr <= sb2(5 downto 0) & spalix;
+
+  -- sprite RAM address
+  spram_addr <= "0000" & std_logic_vector(index) & splohi;
 
   -- Finite state machine to paint a single horizontal line, by:
   --  0. wait for horizontal scan to start
@@ -366,193 +396,108 @@ begin  -- behaviour
   --  2. overwrite all non-zero row pixels for all sprites intersecting the line
   --  3. overwrite all static tile rows on plane 1
   fsm: process (clk, reset)
-    variable flipoff : unsigned(7 downto 0);
   begin  -- process fsm
     if reset = '1' then
       state  <= INIT;
-      b0     <= X"00";
-      b1     <= X"00";
-      b2     <= X"00";
+      tb0    <= X"00"; tb1 <= X"00";
+      sb0    <= X"00"; sb1 <= X"00"; sb2 <= X"00"; sb3 <= X"00";
       sprow  <= X"00";
-      nrow   <= X"00";
-      frow   <= X"00";
-      sprpx  <= X"00";
       shpos  <= "0000";
       index  <= "00000";
       thpos  <= "000";
-      spalix <= "00";
-      plane  <= '0';
-
-      tpshift <= "00";
-
-      rram_addr <= "000000000000000";
+      dplane <= '0';
+      splohi <= '0';
 
       pixel_waddr <= "000000000";
       pixel_wdata <= "00000";
       pixel_we    <= '0';
-      flipoff := X"00";
       
     elsif clk'event and clk = '0' then  -- falling clock edge
+      phblank <= hblank;
+      
       case state is
         when INIT =>
-          if (spixel = 1) then
-            state <= SELECT_TILE_B0;
+          if ((phblank = '1') and (hblank = '0')) then
+            state <= GET_TILE_BYTES;
             index <= "00000";
             thpos <= "000";
           end if;
-        when SELECT_TILE_B0 =>
-          rram_addr <= "11100" & not std_logic_vector(index) &
-                      std_logic_vector(vpos(7 downto 3));
-          state <= GET_TILE_B0_SEL_B1;
-        when GET_TILE_B0_SEL_B1 =>
-          rram_addr <= "11101" & not std_logic_vector(index) &
-                      std_logic_vector(vpos(7 downto 3));
-          if (rram_dout(4) /= plane) then
-            thpos <= "111";
-            state <= ADVANCE_TILE_PIXEL;
-          else
-            b0 <= rram_dout;
-            if rram_dout(7) = '0' then
-              tpshift <= std_logic_vector(vpos(1 downto 0));
-            else
-              tpshift <= not std_logic_vector(vpos(1 downto 0)); 
-            end if;
-            state <= GET_TILE_B1_SEL_PI;
-          end if;  
-        when GET_TILE_B1_SEL_PI =>
-          b1 <= rram_dout;
-          rram_addr <= "10" & b0(5) & rram_dout(7 downto 0) & tvoff & thoff;
-          state <= GET_TILE_PALETTE_INDEX;
-        when SELECT_TILE_PI =>
-          rram_addr <= "10" & b0(5) & b1(7 downto 0) & tvoff & thoff;
-          state <= GET_TILE_PALETTE_INDEX;
-        when GET_TILE_PALETTE_INDEX =>
-          if tpshift = "00" then
-            rram_addr <= "11110010" & b0(4 downto 0) & rram_dout(3) &
-                        rram_dout(7);
-          elsif tpshift = "01" then
-            rram_addr <= "11110010" & b0(4 downto 0) & rram_dout(2) &
-                        rram_dout(6);
-          elsif tpshift = "10" then
-            rram_addr <= "11110010" & b0(4 downto 0) & rram_dout(1) &
-                        rram_dout(5);
-          elsif tpshift = "11" then
-            rram_addr <= "11110010" & b0(4 downto 0) & rram_dout(0) &
-                        rram_dout(4);
-          end if;
+        when GET_TILE_BYTES =>
+          tb0   <= tcram_data;
+          tb1   <= tvram_data;
           state <= GET_TILE_PIXEL;
         when GET_TILE_PIXEL =>
-          if (b0(4) = plane) then       -- only write pixel data on active
-                                        -- plane 
+          if (tplane = dplane) then     -- only write pixel data on active plane 
             pixel_waddr <= std_logic(vpos(0)) & std_logic_vector(index) &
                            std_logic_vector(thpos);
-            pixel_wdata <= '1' & rram_dout(3 downto 0);
+            pixel_wdata <= '1' & tprom_data(3 downto 0);
             pixel_we <= '1';
+          else
+            thpos <= "111";             -- advance to end of tile index
           end if;
           state <= ADVANCE_TILE_PIXEL;
         when ADVANCE_TILE_PIXEL =>
           if ((thpos = 7) and (index = 31)) then
-            if plane = '0' then
+            if dplane = '0' then
               -- keep index at 31, sprite indices decrement from there
-              state <= SELECT_SPRITE_B2;
-              shpos <= "0000";
+              state  <= GET_SPRITE_B31_SEL_B20;
+              splohi <= '1';
             else
-              plane <= '0';
+              dplane <= '0';
               state <= INIT;
             end if;
           elsif (thpos = 7) then
             index <= index + 1;
-            state <= SELECT_TILE_B0;
+            state <= GET_TILE_BYTES;
           else
-            state <= SELECT_TILE_PI;
+            state <= GET_TILE_PIXEL;
           end if;
           thpos <= thpos + 1;
           pixel_we <= '0';
-
-        when SELECT_SPRITE_B2 =>
-          rram_addr <= "110110000" & std_logic_vector(index) & '0';
-          state <= GET_SPRITE_B2_SEL_B0;
-        when GET_SPRITE_B2_SEL_B0 =>
-          b2 <= rram_dout;
-          rram_addr <= "110100000" & std_logic_vector(index) & '0';
-          state <= GET_SPRITE_B0_SEL_B1;
-          flipoff := 15 - vpos(7 downto 0); -- determine this partial value at this state
-                                            -- to improve timing closure on frow
-        when GET_SPRITE_B0_SEL_B1 =>
-          -- retain the raw b0
-          b0 <= rram_dout;
-          rram_addr <= "110100000" & std_logic_vector(index) & '1';
-          state <= CALC_SPRITE_ROW;
-        when CALC_SPRITE_ROW =>
-          nrow <= (vpos(7 downto 0) - unsigned(b0));   -- normal orientation
-          frow <= (flipoff + unsigned(b0));  -- flipped orientation   
-          state <= GET_SPRITE_B1_SEL_B3;
-        when GET_SPRITE_B1_SEL_B3 =>
-          b1 <= rram_dout;
-          rram_addr <= "110110000" & std_logic_vector(index) & '1';
+          
+        when GET_SPRITE_B31_SEL_B20 =>
+          sb1    <= spraml_data; sb3 <= spramh_data;
+          splohi <= '0';
+          state  <= GET_SPRITE_B20;
+        when GET_SPRITE_B20 =>
+          sb0   <= spraml_data; sb2 <= spramh_data;
+          shpos <= "0000";
+          state <= CHECK_SPRITE_ROW;
+        when CHECK_SPRITE_ROW =>
           -- process this sprite if this scan line intersects, skip otherwise
-          if ((nrow < 16) and (b2(6) = '1')) then
-            state <= GET_SPRITE_B3_SEL_PI;
+          if ((nrow < 16) and (sflipy = '0')) then
+            state <= GET_SPRITE_PIXEL;
             sprow <= nrow;
-          elsif ((frow < 16) and (b2(6) = '0')) then
-            state <= GET_SPRITE_B3_SEL_PI;
+          elsif ((frow < 16) and (sflipy = '1')) then
+            state <= GET_SPRITE_PIXEL;
             sprow <= frow;
           else
             shpos <= "1111";
             state <= ADVANCE_SPRITE_PIXEL;
           end if;
-        when GET_SPRITE_B3_SEL_PI =>
-          b3 <= rram_dout;
-          rram_addr <= '0' & b1 & std_logic(shpos(3)) &
-                      std_logic_vector(sprow(3 downto 2)) &
-                      std_logic_vector(shpos(2 downto 0));
-          state <= GET_SPRITE_PALETTE_INDEX;
-        when SELECT_SPRITE_PI =>
-          rram_addr <= '0' & b1 & std_logic(shpos(3)) &
-                      std_logic_vector(sprow(3 downto 2)) &
-                      std_logic_vector(shpos(2 downto 0));
-          state <= GET_SPRITE_PALETTE_INDEX;
-        when GET_SPRITE_PALETTE_INDEX =>
-          if sprow(1 downto 0) = 0 then
-            rram_addr <= "1111000" & b2(5 downto 0) & rram_dout(3) &
-                        rram_dout(7);
-            spalix <= rram_dout(3) & rram_dout(7);
-          elsif sprow(1 downto 0) = 1 then
-            rram_addr <= "1111000" & b2(5 downto 0) & rram_dout(2) &
-                        rram_dout(6);
-            spalix <= rram_dout(2) & rram_dout(6);
-          elsif sprow(1 downto 0) = 2 then
-            rram_addr <= "1111000" & b2(5 downto 0) & rram_dout(1) &
-                        rram_dout(5);
-            spalix <= rram_dout(1) & rram_dout(5);
-          elsif sprow(1 downto 0) = 3 then
-            rram_addr <= "1111000" & b2(5 downto 0) & rram_dout(0) &
-                        rram_dout(4);
-            spalix <= rram_dout(0) & rram_dout(4);
-          end if;
-          sprpx <= (unsigned(b3) + shoff - 1);
-          state <= GET_SPRITE_PIXEL;
         when GET_SPRITE_PIXEL =>
           -- only write pixel data on active sprite, colour zero is transparent
           if ((sprow < 16) and not (spalix = "00")) then
             pixel_waddr <= std_logic(vpos(0)) & std_logic_vector(sprpx);
-            pixel_wdata <= '0' & rram_dout(3 downto 0);        
-            pixel_we <= '1';
+            pixel_wdata <= '0' & pprom_data(3 downto 0);
+            pixel_we    <= '1';
           end if;
           state <= ADVANCE_SPRITE_PIXEL;
         when ADVANCE_SPRITE_PIXEL =>
           if ((shpos = 15) and (index = 8)) then
-            plane <= '1';
-            state <= SELECT_TILE_B0;
-            index <= "00000";
+            dplane <= '1';
+            state  <= GET_TILE_BYTES;
+            index  <= "00000";
           elsif (shpos = 15) then
-            index <= index - 1;
-            state <= SELECT_SPRITE_B2;
+            index  <= index - 1;
+            splohi <= '1';
+            state  <= GET_SPRITE_B31_SEL_B20;
           else
-            state <= SELECT_SPRITE_PI;
+            state <= GET_SPRITE_PIXEL;
           end if;
-          shpos <= shpos + 1;
+          shpos    <= shpos + 1;
           pixel_we <= '0';
+          
         when others => null;
       end case;
     end if;
@@ -560,14 +505,17 @@ begin  -- behaviour
 
   -----------------------------------------------------------------------------
 
+  -- double-buffering pixel RAM holds a single scan line for output while
+  -- composing the next one
   pixel_buf : pixel_ram
     port map (
-      clk => clk,
-      we => pixel_we,
-      a => pixel_waddr,
+      clk  => clk,
+      we   => pixel_we,
+      a    => pixel_waddr,
       dpra => pixel_raddr,
-      di => pixel_wdata,
-      dpo => pixel_rdata );
+      di   => pixel_wdata,
+      dpo  => pixel_rdata
+    );
 
   -----------------------------------------------------------------------------
   

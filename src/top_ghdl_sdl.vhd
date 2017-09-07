@@ -38,13 +38,17 @@ architecture behaviour of top_ghdl_sdl is
   signal red     : std_logic_vector(7 downto 0);
   signal grn     : std_logic_vector(7 downto 0);
   signal blu     : std_logic_vector(7 downto 0);
+  signal xpixel  : std_logic_vector(7 downto 0);
+  signal ypixel  : std_logic_vector(7 downto 0);
   signal pxclk   : std_logic;
   signal hsync   : std_logic;
   signal hblank  : std_logic;
   signal phblank : std_logic;
   signal vsync   : std_logic;
   signal vblank  : std_logic;
+  signal pvblank : std_logic;
 
+  -- audio signals
   signal audio   : std_logic_vector(17 downto 0);
   signal aclk    : std_logic;
 
@@ -60,19 +64,22 @@ begin  -- behaviour
     wait;
   end process master_reset;
   
-  -- generate the 73.728 MHz master clock
+  -- generate the 36.864 MHz master clock
   master_clk : process
   begin
     loop
       mclk <= '0';
-      wait for 6.781 ns;
+      wait for 13.942 ns;
       mclk <= '1';
-      wait for 6.781 ns;
+      wait for 13.942 ns;
     end loop;
   end process master_clk;
 
   -- game implementation
   TIME_PILOT : entity work.time_pilot
+    generic map (
+      LOGINFO => true
+    )
     port map (
       mclk      => mclk,
       mreset    => mreset,
@@ -98,6 +105,8 @@ begin  -- behaviour
       hblank    => hblank,
       vsync     => vsync,
       vblank    => vblank,
+      xpixel    => xpixel,
+      ypixel    => ypixel,
       pxclk     => pxclk,
 
       audio     => audio,
@@ -105,30 +114,18 @@ begin  -- behaviour
     );
 
   -- marshal video signal to SDL frame
+  -- original screen rotated 90 degrees (
   sdl_video : process(pxclk)
-    variable x : integer := 0;
-    variable y : integer := 0;
     variable dummy : integer := 0;
   begin
     if pxclk'event and pxclk = '1' then
-      phblank <= hblank;
-      
-      -- sync x and y position
-      if hblank = '0' and phblank = '1' then
-        x := 0;
-        if vblank = '1' then
-          y := 0;
-        else
-          y := y + 1;
-        end if;
-      else
-        x := x + 1;
+      if vblank = '0' and hblank = '0' then
+        dummy := put_pixel(255 - to_integer(unsigned(ypixel)),
+                           to_integer(unsigned(xpixel)),
+                           to_integer(unsigned(red)),
+                           to_integer(unsigned(grn)),
+                           to_integer(unsigned(blu)));
       end if;
-
-      dummy := put_pixel(x, y,
-                         to_integer(unsigned(red)),
-                         to_integer(unsigned(grn)),
-                         to_integer(unsigned(blu)));
     end if;
   end process sdl_video;
   
